@@ -9,15 +9,17 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Resources;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Forms;
+using System.Windows.Threading;
 
 namespace RemoteDesktopWPF.ViewModels
 {
     public class MainWindowViewModel : BindableBase
     {
+        private Dispatcher dispatcher;
         private MainWindow thisWindow;  // 메인 윈도우
-        private RdpControl rdp; // 원격연결 대상 객체
         private Dictionary<string, Form> rdpConnects = null;  // 원격연결된 객체 컬렉션
 
         #region [Propp]
@@ -57,6 +59,7 @@ namespace RemoteDesktopWPF.ViewModels
         // [Ctor] 생성자
         public MainWindowViewModel()
         {
+            dispatcher = System.Windows.Application.Current.Dispatcher;
             rdpConnects = new Dictionary<string, Form>();
             Util.Instance.LoadHosts();
             HostList = new ObservableCollection<RdpHost>(Util.Instance.HostList);
@@ -94,7 +97,7 @@ namespace RemoteDesktopWPF.ViewModels
         // [Command] 메뉴 버튼
         private DelegateCommand<string> cmdMenu;
         public DelegateCommand<string> CmdMenu =>
-            cmdMenu ?? (cmdMenu = new DelegateCommand<string>((s)=> 
+            cmdMenu ?? (cmdMenu = new DelegateCommand<string>(async (s)=> 
             {
                 switch (s.ToLower())
                 {
@@ -106,10 +109,14 @@ namespace RemoteDesktopWPF.ViewModels
                             ExecuteAdd(SelectedHost);
                         break;
                     case "delete":
-                        ExecuteDelete();
+                        HostList.Where(g => g.IsChecked).ToList().ForEach(g => { ExecuteDelete(g); });
                         break;
                     case "connect":
-                        HostList.Where(g => g.IsChecked).ToList().ForEach(g => { ExecuteConnect(g); });
+                        await HostList.Where(g => g.IsChecked).ToList().ForEachAsync(async g => 
+                        {
+                            ExecuteConnect(g);
+                            await Task.Delay(500);
+                        });
                         break;
                     case "disconnect":
                         HostList.Where(g => g.IsChecked).ToList().ForEach(g => { ExecuteDisconnect(g); });
@@ -136,10 +143,10 @@ namespace RemoteDesktopWPF.ViewModels
 
 
         // [Method] 원격서버 삭제하기
-        private void ExecuteDelete()
+        private void ExecuteDelete(RdpHost host)
         {
-            if (SelectedHost == null) return;
-            Util.Instance.RemoveHost(SelectedHost);
+            if (host == null) return;
+            Util.Instance.RemoveHost(host);
             HostList = new ObservableCollection<RdpHost>(Util.Instance.HostList);
         }
         // [Method] 원격서버 연결
@@ -163,71 +170,95 @@ namespace RemoteDesktopWPF.ViewModels
 
 
         // [Method] 원격연결 객체 생성
-        private void CreateRdpClient(RdpHost host)
+        private async void CreateRdpClient(RdpHost host)
         {
-            string[] ServerIps = host.Server.Split(':');
-
-            Form rdpFrom = new Form();
-            rdpFrom.ShowIcon = false;
-            rdpFrom.Name = host.Server.Replace(".", "");
-            rdpFrom.Text = $"({rdpFrom.Name}) {host.Description}";
-            rdpFrom.Size = new System.Drawing.Size(1024, 768);
-            rdpFrom.FormClosed += new FormClosedEventHandler(this.rdpForm_Closed);
-            
-            if (rdpConnects.ContainsKey(rdpFrom.Name))
+            await dispatcher.Invoke(async () =>
             {
-                Status = $"({host.Server}) 이미 연결 되었습니다.";
-                return;
-            }
-            else
-                rdp = new RdpControl();
-            rdpConnects.Add(rdpFrom.Name, rdpFrom);
+                string[] ServerIps = host.Server.Split(':');
 
-            ((System.ComponentModel.ISupportInitialize)(rdp)).BeginInit();
-            rdp.Dock = DockStyle.Fill;
-            rdp.Enabled = true;
+                // 원격연결 표시 폼 생성
+                Form rdpFrom = new Form();
+                rdpFrom.ShowIcon = false;
+                rdpFrom.Name = host.Server.Replace(".", "");
+                rdpFrom.Text = $"({rdpFrom.Name}) {host.Description}";
+                rdpFrom.Size = new System.Drawing.Size(1024, 768);
+                rdpFrom.FormClosed += new FormClosedEventHandler(this.rdpForm_Closed);
 
-            // 원격연결 이벤트
-            rdp.OnConnecting += new EventHandler(this.rdp_OnConnecting);
-            rdp.OnDisconnected += new IMsTscAxEvents_OnDisconnectedEventHandler(this.rdp_OnDisconnected);
+                var rdp = new RdpControl();
 
-            rdpFrom.Controls.Add(rdp);
-            rdpFrom.WindowState = FormWindowState.Maximized;
-            rdpFrom.Show();
-            ((System.ComponentModel.ISupportInitialize)(rdp)).EndInit();
+                // 이미 연결된 경우
+                if (rdpConnects.ContainsKey(rdpFrom.Name))
+                {
+                    Status = $"({host.Server}) 이미 연결 되었습니다.";
+                    return;
+                }
+                // 연결 컬렉션에 추가
+                rdpConnects.Add(rdpFrom.Name, rdpFrom);
 
-            rdp.Name = rdpFrom.Name;
-            rdp.Server = host.Server;
-            rdp.UserName = host.UserName;
-            rdp.AdvancedSettings7.RDPPort = ServerIps.Length == 1 ? 3389 : Convert.ToInt32(ServerIps[1]);
-            //rdp.AdvancedSettings7.ContainerHandledFullScreen = 1;
-            rdp.AdvancedSettings7.SmartSizing = host.SmartSizing;
-            rdp.AdvancedSettings7.EnableCredSspSupport = true;
-            rdp.AdvancedSettings7.ClearTextPassword = host.ClearTextPassword;
-            //rdp.AdvancedSettings7.PublicMode = false;
-            rdp.ColorDepth = host.ColorDepth;
-            rdp.FullScreen = host.FullScreen;
-            //rdp.DesktopWidth = rdpFrom.ClientRectangle.Width;
-            //rdp.DesktopHeight = rdpFrom.ClientRectangle.Height;
-            var screenRect = Screen.PrimaryScreen.Bounds;
-            rdp.DesktopWidth = screenRect.Width;
-            rdp.DesktopHeight = screenRect.Height;
-            rdp.Connect();
+                // 원격연결 초기화 설정
+                ((System.ComponentModel.ISupportInitialize)(rdp)).BeginInit();
+                rdp.Dock = DockStyle.Fill;
+                rdp.Enabled = true;
+                rdp.OnConnecting += new EventHandler(this.rdp_OnConnecting);
+                rdp.OnDisconnected += new IMsTscAxEvents_OnDisconnectedEventHandler(this.rdp_OnDisconnected);
+                rdp.OnConnected += Rdp_OnConnected;
+                rdpFrom.Controls.Add(rdp);
+                rdpFrom.WindowState = FormWindowState.Maximized;
+                rdpFrom.Show();
+                ((System.ComponentModel.ISupportInitialize)(rdp)).EndInit();
+
+                // 원격연결 객체 속성 설정
+                rdp.Name = rdpFrom.Name;
+                rdp.Server = host.Server;
+                rdp.UserName = host.UserName;
+                rdp.AdvancedSettings7.RDPPort = ServerIps.Length == 1 ? 3389 : Convert.ToInt32(ServerIps[1]);
+                //rdp.AdvancedSettings7.ContainerHandledFullScreen = 1;
+                rdp.AdvancedSettings7.SmartSizing = host.SmartSizing;
+                rdp.AdvancedSettings7.EnableCredSspSupport = true;
+                rdp.AdvancedSettings7.ClearTextPassword = host.ClearTextPassword;
+                //rdp.AdvancedSettings7.PublicMode = false;
+                rdp.ColorDepth = host.ColorDepth;
+                rdp.FullScreen = host.FullScreen;
+                //rdp.DesktopWidth = rdpFrom.ClientRectangle.Width;
+                //rdp.DesktopHeight = rdpFrom.ClientRectangle.Height;
+                var screenRect = Screen.PrimaryScreen.Bounds;
+                rdp.DesktopWidth = screenRect.Width;
+                rdp.DesktopHeight = screenRect.Height;
+
+                // 연결
+                rdp.Connect();
+                await Task.Delay(100);
+            });
+
+
+
         }
 
+        // [Event] 원격연결 OnConnected
+        private void Rdp_OnConnected(object sender, EventArgs e)
+        {
+            var rdp = sender as AxMsRdpClient9NotSafeForScripting;
+            
+            Status = $"({rdp.Server}) 에 연결되었습니다.";
+        }
+
+
+        // [Event] 원격연결 OnDisconnected
         private void rdp_OnDisconnected(object sender, IMsTscAxEvents_OnDisconnectedEvent e)
         {
             var rdp = sender as AxMsRdpClient9NotSafeForScripting;
             var test = rdp.GetErrorDescription(0, 0);
+            var test2 = rdp.ExtendedDisconnectReason;
             string msg = $"원격 데스크탑 {rdp.Server} 연결이 끊겼습니다!";
             rdp.DisconnectedText = msg;
             var form = rdp.FindForm();
-            form.Close();
-            form.Dispose();
-            Status = msg;
-            rdp.Dispose();
+            //form.Close();
+            //form.Dispose();
+            //rdp.Dispose();
+            Status = msg;            
         }
 
+        // [Event] 원격연결 OnConnecting
         private void rdp_OnConnecting(object sender, EventArgs e)
         {
             var rdp = sender as AxMsRdpClient9NotSafeForScripting;
@@ -235,6 +266,7 @@ namespace RemoteDesktopWPF.ViewModels
             rdp.FindForm().WindowState = FormWindowState.Normal;
         }
 
+        // [Event] 원격연결 창 Closed
         private void rdpForm_Closed(object sender, FormClosedEventArgs e)
         {
             Form frm = (Form)sender;

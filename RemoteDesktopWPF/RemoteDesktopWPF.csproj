@@ -69,6 +69,7 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Common\ExtensionMethod.cs" />
     <Compile Include="Common\Util.cs" />
     <Compile Include="ViewModels\RdpHostDialogViewModel.cs" />
     <Compile Include="Views\RdpHostDialog.xaml.cs">
