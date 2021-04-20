@@ -209,7 +209,7 @@ namespace RemoteDesktopWPF.ViewModels
 
                 // 원격연결 객체 속성 설정
                 rdp.Name = rdpFrom.Name;
-                rdp.Server = host.Server;
+                rdp.Server = ServerIps.Length == 1 ? host.Server : ServerIps[0];
                 rdp.UserName = host.UserName;
                 rdp.AdvancedSettings7.RDPPort = ServerIps.Length == 1 ? 3389 : Convert.ToInt32(ServerIps[1]);
                 //rdp.AdvancedSettings7.ContainerHandledFullScreen = 1;
