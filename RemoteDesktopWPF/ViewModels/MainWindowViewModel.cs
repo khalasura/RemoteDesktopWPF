@@ -59,6 +59,7 @@ namespace RemoteDesktopWPF.ViewModels
         // [Ctor] 생성자
         public MainWindowViewModel()
         {
+            // 현재 디스패처
             dispatcher = System.Windows.Application.Current.Dispatcher;
             rdpConnects = new Dictionary<string, Form>();
             Util.Instance.LoadHosts();
